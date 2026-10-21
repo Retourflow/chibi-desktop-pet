@@ -27,7 +27,7 @@
 | 实时渲染 | moderngl（OpenGL 3.3）离屏渲染到 FBO → 读回 → 透明 PySide6 窗口 | ✓ 云端（llvmpipe 软件 GL + Xvfb）跑到 61 fps；**Windows 上待验证** |
 | 窗口 | PySide6，无边框 + 透明 + 置顶 + 托盘 | ✓ 同上，Windows 上的透明和点击穿透待验证 |
 | 面捕 | VTube Studio 插件 API，`ws://localhost:8001` | 计划（T6） |
-| 测试 | pytest | ✓ 16 个测试 |
+| 测试 | pytest | ✓ 21 个测试（GPU 测试需要 GL 环境，否则跳过） |
 
 ## 3. 代码结构
 
