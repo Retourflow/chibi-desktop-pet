@@ -67,7 +67,9 @@ class PetWindow(QWidget):
         self._image = None
         self._drag_from: QPoint | None = None
         self._last = time.perf_counter()
+        self._stats = [self._last, 0, 0.0]  # report start, frames, seconds spent in tick()
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.PreciseTimer)  # coarse timers may round 16 ms up and cap the frame rate
         self.timer.timeout.connect(self.tick)
         self.timer.start(int(1000 / fps))
         self._make_tray()
@@ -118,6 +120,17 @@ class PetWindow(QWidget):
         image.setDevicePixelRatio(dpr)
         self._frame, self._image = frame, image
         self.update()
+        self._report(now)
+
+    def _report(self, now: float, every: float = 5.0):
+        """Print the frame rate and per-frame cost to the console every few seconds."""
+        start, frames, busy = self._stats
+        frames += 1
+        busy += time.perf_counter() - now
+        if now - start >= every:
+            print(f"fps {frames / (now - start):5.1f} | work per frame {busy / frames * 1000:4.1f} ms", flush=True)
+            start, frames, busy = now, 0, 0.0
+        self._stats = [start, frames, busy]
 
     def paintEvent(self, event):
         if self._image is None:
