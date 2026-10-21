@@ -152,10 +152,45 @@ def make_layers(sheet_path: Path):
     claim("mouth_omega", poly_mask(POLY["mouth_omega"], shape) & face_poly & (rgb[..., 0].astype(int) - rgb[..., 1] > 40))
     claim("ear_R", tidy(poly_mask(POLY["ear_R"], shape) & ~hairlike))
     claim("ear_L", tidy(poly_mask(POLY["ear_L"], shape) & ~hairlike))
-    claim("hair_front", poly_mask(POLY["hair_front"], shape) | (face_poly & hairlike & ~claimed))
-    claim("hair_side_R", poly_mask(POLY["hair_side_R"], shape))
-    claim("hair_side_L", poly_mask(POLY["hair_side_L"], shape))
-    claim("face", face_poly)
+
+    # Hair vs. skin. In the flat art the bangs and side hair are painted straight onto
+    # the face, so cutting by polygon alone leaves hair lines in the face layer and
+    # skin in the hair layers. Once the head turns those layers move by different
+    # amounts and the leftovers show up as doubled lines ("ghosts"). So split by
+    # colour as well: skin goes to the face, hair and its dark outlines go to the hair.
+    r, g, b = [rgb[..., i].astype(int) for i in range(3)]
+    lum = (r + g + b) / 3
+    outline = lum < 60
+    skinlike = (lum > 175) & (r >= g) & (r >= b) & (r - b < 70)
+    yy = np.mgrid[: shape[0], : shape[1]][0]
+    bangs = poly_mask(POLY["hair_front"], shape)
+    sides = poly_mask(POLY["hair_side_R"], shape) | poly_mask(POLY["hair_side_L"], shape)
+    # strand tips and their outlines hanging over the upper face
+    strands = face_poly & (hairlike | outline) & (yy < 300)
+    cand = (bangs | strands) & alpha & ~claimed & ~skinlike
+    lab, _ = ndimage.label(cand)
+    touching = np.unique(lab[bangs & cand])
+    hf = np.isin(lab, touching[touching > 0])
+    # the polygon is cut a little inside the silhouette; the outer outline of the top
+    # of the head belongs to the bangs layer too, otherwise it stays behind on the back
+    # hair and shows up as a second outline when the head turns
+    top_rim = ndimage.binary_dilation(bangs, iterations=8) & ~bangs & (yy < 255)
+    hf |= top_rim & alpha & ~claimed & ~skinlike & (hairlike | outline)
+    # anti-aliased edge pixels (half hair, half skin) stay with the hair
+    hf |= ndimage.binary_dilation(hf) & ~skinlike & alpha & ~claimed & (bangs | face_poly) & (yy < 300)
+    claim("hair_front", hf)
+    for side in ("R", "L"):
+        claim(f"hair_side_{side}", poly_mask(POLY[f"hair_side_{side}"], shape) & ~skinlike)
+    # skin that sat inside the hair polygons, right next to the face, belongs to the face.
+    # It must stay inside the face's bounding box: the rig spec positions the whole
+    # head relative to the face rect, so the face must not grow.
+    forehead = poly_mask([(204, 200), (370, 200), (370, 296), (204, 296)], shape)
+    ys, xs = np.nonzero(face_poly | forehead)
+    in_box = np.zeros(shape, bool)
+    in_box[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1] = True
+    near_face = ndimage.binary_dilation(face_poly, iterations=10)
+    skin_extra = (bangs | sides) & skinlike & alpha & ~claimed & in_box & near_face
+    claim("face", face_poly | skin_extra)
     claim("tail", poly_mask(POLY["tail"], shape))
     claim("torso", poly_mask(POLY["torso"], shape))
     claim("hair_back", np.ones(shape, bool))
@@ -177,10 +212,10 @@ def make_layers(sheet_path: Path):
 
     # face: fill eyes, mouth, and the forehead hidden under the bangs with skin
     # extend the face up under the bangs (forehead), not sideways past the cheek outline
-    face_full = face_poly | poly_mask([(204, 200), (370, 200), (370, 296), (204, 296)], shape)
+    face_full = ndimage.binary_closing(face_poly | skin_extra | forehead, iterations=2)
+    face_full = ndimage.binary_fill_holes(face_full) & in_box
     face_img = rgb.copy()
-    fill = face_full & ~masks["face"] | (face_poly & claimed & ~masks["face"])
-    face_img[fill] = skin
+    face_img[face_full & ~masks["face"]] = skin  # under eyes, mouth, brows and hair: plain skin
     layers["face"] = rgba(face_img, face_full)
 
     # eyes
@@ -238,7 +273,12 @@ def make_layers(sheet_path: Path):
     newly = back_fill & (hb[..., 3] == 0)
     hb[newly, :3] = HAIR_COLOR
     hb[newly, 3] = 255
-    inpaint("hair_front", poly_mask(POLY["hair_front"], shape) & ~poly_mask(POLY["face"], shape))
+    # inside the head, whatever was left over (bits of eyes, outlines) would peek out
+    # when the face moves; replace it with plain hair colour
+    inside_head = ndimage.binary_dilation(head | face_full, iterations=2) & (hb[..., 3] > 0)
+    hb[inside_head, :3] = HAIR_COLOR
+    # holes in the bangs where accessories were cut out
+    inpaint("hair_front", bangs & ~face_full)
     return layers
 
 
