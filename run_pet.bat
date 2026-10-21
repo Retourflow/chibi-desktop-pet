@@ -17,7 +17,13 @@ if not exist ".venv\Scripts\python.exe" (
     echo [setup] creating .venv with %PYTHON% ...
     "%PYTHON%" -m venv .venv || goto :error
     ".venv\Scripts\python.exe" -m pip install --upgrade pip || goto :error
+)
+rem (Re)install dependencies when pyproject.toml changed since the last install.
+fc /b pyproject.toml ".venv\pyproject.installed" >nul 2>&1
+if errorlevel 1 (
+    echo [setup] installing dependencies ...
     ".venv\Scripts\python.exe" -m pip install -e ".[app,psd]" || goto :error
+    copy /y pyproject.toml ".venv\pyproject.installed" >nul
 )
 
 set "MODEL=%~1"

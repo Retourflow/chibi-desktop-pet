@@ -1,6 +1,6 @@
 """Run the desktop pet.
 
-    python -m chibi_pet.app <model_dir> [--rig assets/rig/chibi.rig.json] [--size 中]
+    python -m chibi_pet.app <model_dir> [--rig assets/rig/chibi.rig.json] [--size 中] [--vts]
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ def main(argv=None):
     ap.add_argument("--rig", default=str(DEFAULT_RIG))
     ap.add_argument("--size", default="中", choices=["小", "中", "大", "特大"])
     ap.add_argument("--fps", type=int, default=60)
+    ap.add_argument("--vts", action="store_true", help="start with VTube Studio face tracking on")
+    ap.add_argument("--vts-port", type=int, default=8001)
     args = ap.parse_args(argv)
 
     from PySide6.QtWidgets import QApplication
@@ -26,7 +28,9 @@ def main(argv=None):
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # closing happens from the tray menu
-    win = PetWindow(args.model_dir, args.rig, size=args.size, fps=args.fps)
+    win = PetWindow(args.model_dir, args.rig, size=args.size, fps=args.fps,
+                    tracking=args.vts, vts_port=args.vts_port)
+    app.aboutToQuit.connect(win.shutdown)
     win.show()
     sys.exit(app.exec())
 

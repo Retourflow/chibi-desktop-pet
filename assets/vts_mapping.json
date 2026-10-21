@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "How VTube Studio tracking values become our rig parameters.",
+    "Each entry: our parameter, the VTS input(s) it reads (averaged if more than one),",
+    "the input range and the output range. Values are mapped linearly and clamped.",
+    "To flip a direction, swap the two numbers of 'out'.",
+    "Input names follow VTS's default tracking parameters; check them on your PC with",
+    "  python -m chibi_pet.drive.vts --dump"
+  ],
+  "channels": [
+    {"param": "ParamAngleX", "inputs": ["FaceAngleX"], "in": [-30, 30], "out": [-30, 30]},
+    {"param": "ParamAngleY", "inputs": ["FaceAngleY"], "in": [-30, 30], "out": [-30, 30]},
+    {"param": "ParamAngleZ", "inputs": ["FaceAngleZ"], "in": [-30, 30], "out": [-30, 30]},
+    {"param": "ParamBodyAngleX", "inputs": ["FaceAngleX"], "in": [-30, 30], "out": [-10, 10]},
+    {"param": "ParamBodyAngleY", "inputs": ["FaceAngleY"], "in": [-30, 30], "out": [-10, 10]},
+    {"param": "ParamBodyAngleZ", "inputs": ["FaceAngleZ"], "in": [-30, 30], "out": [-10, 10]},
+    {"param": "ParamEyeLOpen", "inputs": ["EyeOpenLeft"], "in": [0, 1], "out": [0, 1]},
+    {"param": "ParamEyeROpen", "inputs": ["EyeOpenRight"], "in": [0, 1], "out": [0, 1]},
+    {"param": "ParamEyeBallX", "inputs": ["EyeLeftX", "EyeRightX"], "in": [-1, 1], "out": [-1, 1]},
+    {"param": "ParamEyeBallY", "inputs": ["EyeLeftY", "EyeRightY"], "in": [-1, 1], "out": [-1, 1]},
+    {"param": "ParamBrowLY", "inputs": ["Brows"], "in": [0, 1], "out": [-1, 1]},
+    {"param": "ParamBrowRY", "inputs": ["Brows"], "in": [0, 1], "out": [-1, 1]},
+    {"param": "ParamMouthOpenY", "inputs": ["MouthOpen"], "in": [0, 1], "out": [0, 1]},
+    {"param": "ParamMouthForm", "inputs": ["MouthSmile"], "in": [0, 1], "out": [-1, 1]}
+  ]
+}

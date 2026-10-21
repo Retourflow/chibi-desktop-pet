@@ -1,6 +1,6 @@
 # design.md — chibi-desktop-pet
 
-> 状态（2026-10-21）：导入器、rig 核心、物理、CPU 预览渲染、GPU 渲染、透明桌宠窗口（待机 + 鼠标跟随 + 拖动 + 托盘）已实现；VTube Studio、点击互动、打瞌睡还没做。标「待验证」的地方还没有实际跑过。
+> 状态（2026-10-21）：导入器、rig 核心、物理、CPU 预览渲染、GPU 渲染、透明桌宠窗口（待机 + 鼠标跟随 + 拖动 + 托盘）、VTube Studio 面捕（用模拟的 VTS 服务器测过，真实 VTS 待验证）已实现；点击互动、打瞌睡还没做。标「待验证」的地方还没有实际跑过。
 
 ## 1. 路线
 
@@ -26,7 +26,7 @@
 | 预览渲染 | 自写 numpy CPU 光栅化（`render/soft.py`），用于测试和预览 GIF | ✓，约 1 秒/帧，只适合离线预览 |
 | 实时渲染 | moderngl（OpenGL 3.3）离屏渲染到 FBO → 读回 → 透明 PySide6 窗口 | ✓ 云端（llvmpipe 软件 GL + Xvfb）跑到 61 fps；**Windows 上待验证** |
 | 窗口 | PySide6，无边框 + 透明 + 置顶 + 托盘 | ✓ 同上，Windows 上的透明和点击穿透待验证 |
-| 面捕 | VTube Studio 插件 API，`ws://localhost:8001` | 计划（T6） |
+| 面捕 | VTube Studio 插件 API，`ws://localhost:8001`，用 `websockets` 库（同步客户端，后台线程） | ✓ 用模拟服务器测过；真实 VTS 待验证 |
 | 测试 | pytest | ✓ 21 个测试（GPU 测试需要 GL 环境，否则跳过） |
 
 ## 3. 代码结构
@@ -51,10 +51,13 @@ src/chibi_pet/
   drive/
     idle.py     呼吸、随机眨眼（偶尔连眨两次）、尾巴和头发的「风」
     mouse.py    头和眼睛跟随鼠标（tanh 饱和 + 指数平滑，眼睛快、身体慢）
+    vts.py      VTube Studio 客户端（后台线程）、参数映射、平滑和淡入淡出；python -m chibi_pet.drive.vts --dump 检查连接
   app/
-    pet_window.py  透明置顶窗口、拖动、右键/托盘菜单（大小、置顶、退出）
+    pet_window.py  透明置顶窗口、拖动、右键/托盘菜单（大小、面捕、置顶、退出）
     __main__.py    python -m chibi_pet.app <model_dir>
-run_pet.bat     Windows 一键启动：在本文件夹里建 .venv，pip 缓存和临时文件也放在本文件夹
+run_pet.bat     Windows 一键启动：在本文件夹里建 .venv，pip 缓存和临时文件也放在本文件夹；pyproject.toml 变了会自动重装依赖
+check_vts.bat   Windows：检查 VTube Studio 连接，打印它发来的所有参数
+assets/vts_mapping.json     VTS 参数 → 我们的参数（范围、方向可改）
 assets/rig/chibi.rig.json   本角色的 rig spec（手写）
 tools/make_placeholder.py   从设定图粗拆占位图层（不提交生成结果）
 tools/preview.py            渲染预览动画 GIF
@@ -128,12 +131,30 @@ z 越大移动越多，所以五官比脸的轮廓移得多、前发比脸移得
 
 VTS 输入参数名以实际 `InputParameterListRequest` 返回为准（待验证）。
 
-## 7. VTube Studio 对接（T6，计划）
+## 7. VTube Studio 对接（T6，`drive/vts.py`）
 
-- 已核实（读过官方 API 文档 DenchiSoft/VTubeStudio README）：WebSocket 默认 `ws://localhost:8001`；需先做插件认证（用户在 VTS 里点允许）；`InputParameterListRequest` 返回所有追踪参数及当前值；`ParameterValueRequest` 读单个参数。
-- 文档提示 `InputParameterListRequest` 不建议 60fps+ 高频调用。计划：约 30fps 轮询，桌宠端插值平滑到 60fps。
-- 是否必须在 VTS 里加载模型才输出追踪值：待验证。
-- 断线时自动回落到鼠标跟随 + 待机动画。
+**依据**：官方 API 文档（DenchiSoft/VTubeStudio README，已读）。WebSocket 默认 `ws://localhost:8001`，用户要在 VTS 设置里开「Allow Plugin API access」。
+
+**流程**：
+1. 连接（`proxy=None`：VTS 在本机，不能走系统代理，比如 VPN 工具设的代理）
+2. 有保存的 token → `AuthenticationRequest`；没有或被撤销 → `AuthenticationTokenRequest`，VTS 弹窗，用户点允许，token 存到项目根目录的 `.vts_token`（不进 git）
+3. 循环：`InputParameterListRequest` 约 30 次/秒（文档说不要 60+），`FaceFoundRequest` 每 0.5 秒一次
+4. 断线 / VTS 没开：状态 `waiting`，1→2→4→…→10 秒退避重连；用户拒绝：状态 `denied`，10 秒后重试
+
+**线程**：客户端跑在后台线程，窗口每帧只读 `snapshot()`（加锁拷贝）。VTS 卡住或没开都不会拖慢 60fps 渲染。
+
+**映射**（`assets/vts_mapping.json`）：每个参数写输入名、输入范围、输出范围，线性映射并截断；多个输入取平均（左右眼球）。翻转方向 = 交换 `out` 的两个数。身体角度 = 头部角度 × 1/3（与 VTS 默认映射一致）。
+
+**平滑与回落**（`TrackingDriver` + `blend`）：
+- 30Hz 的样本用指数平滑（rate 20/s）补到 60fps
+- 权重 weight 在「有脸且样本新于 0.5 秒」时趋向 1，否则趋向 0（rate 5/s，约 0.2 秒过渡）
+- 每帧：`最终值 = 鼠标/待机值 × (1 - weight) + 面捕值 × weight`。呼吸和「风」始终来自待机动画
+
+**待验证（需要用户电脑上的真实 VTS）**：
+- 默认参数名（`EyeLeftX`、`Brows` 等）是否都在：用 `check_vts.bat` 看
+- 方向：转头、歪头、左右眼是否镜像正确
+- `MouthSmile`、`Brows` 的中性值是不是 0.5
+- 是否必须在 VTS 里加载一个模型才输出追踪值
 
 ## 8. 桌宠行为（T7，计划）
 
@@ -166,6 +187,8 @@ VTS 输入参数名以实际 `InputParameterListRequest` 返回为准（待验�
 | 2026-10-21 | 手臂独立摆动，不做动作 | 待机更生动，补画量可控 |
 | 2026-10-21 | 物理只做头发、尾巴、流苏（+手臂摆动） | 裙子拆片在代码 rig 里易出缝 |
 | 2026-10-21 | 面捕用 VTube Studio 当数据源 | 用户指定；VTS 本身不能加载我们的模型 |
+| 2026-10-21 | VTS 客户端用 `websockets` 同步 API + 后台线程 | PySide6-Essentials 不含 QtWebSockets；asyncio 要和 Qt 事件循环整合，比一个线程复杂 |
+| 2026-10-21 | 面捕和鼠标跟随按权重混合，而不是硬切换 | 脸丢失/找回时不跳变 |
 | 2026-10-21 | PSD 2048×2048 | 桌宠显示 400–600px 高，足够缩放 |
 | 2026-10-21 | 代码在 GitHub，同时同步到 `D:\live2d pet` | 用户选择；作品集需要 Git 记录 |
 | 2026-10-21 | 转头用「深度 + 3D 旋转 + 正交投影」自动生成，而不是手调每个角度的 keyform | 代码 rig 没有建模师手调，自动方法是唯一能规模化的做法；原理清晰，也和用户的图形学方向相关 |

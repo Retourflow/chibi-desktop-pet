@@ -7,8 +7,12 @@ Each frame (about 60 per second):
   GLRenderer.render()            ->  RGBA image (offscreen GPU)
   paintEvent                     ->  the image is painted into the transparent window
 
+With face tracking on, VTube Studio's tracking values drive the head, eyes,
+mouth and brows instead (drive/vts.py); when the face is lost or VTS is closed,
+the pet fades back to mouse follow and idle animation.
+
 Left-drag on the character moves the window. The tray icon menu has size,
-always-on-top and quit. Clicks on fully transparent pixels are ignored here; on
+face tracking, always-on-top and quit. Clicks on fully transparent pixels are ignored here; on
 Windows, translucent top-level Qt windows are layered windows, which let those
 clicks fall through to whatever is underneath (to be verified on the user's PC).
 """
@@ -26,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from ..drive.idle import IdleAnimator
 from ..drive.mouse import MouseFollow
+from ..drive.vts import ASK_USER, DENIED, NO_FACE, TRACKING, WAITING, Mapping, TrackingDriver, VTSClient, blend
 from ..render.gl import GLRenderer
 from ..rig.model import load_model
 from ..rig.runtime import Rig
@@ -33,10 +38,18 @@ from ..rig.spec import load_spec
 
 SIZES = {"小": 0.18, "中": 0.25, "大": 0.32, "特大": 0.42}  # canvas px -> logical screen px
 MARGIN = 0.08  # extra room around the character for swinging hair / tail
+VTS_STATUS = {  # tray tooltip text for each face-tracking state
+    WAITING: "面捕：等待 VTube Studio（需要打开 VTS，并在设置里开启 API）",
+    ASK_USER: "面捕：请在 VTube Studio 弹窗里点「允许」",
+    DENIED: "面捕：VTube Studio 拒绝了访问",
+    NO_FACE: "面捕：已连接，没检测到脸",
+    TRACKING: "面捕：追踪中",
+}
 
 
 class PetWindow(QWidget):
-    def __init__(self, model_dir: str | Path, rig_path: str | Path, size: str = "中", fps: int = 60):
+    def __init__(self, model_dir: str | Path, rig_path: str | Path, size: str = "中", fps: int = 60,
+                 tracking: bool = False, vts_port: int = 8001):
         super().__init__(None)
         self.setWindowTitle("chibi pet")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -60,6 +73,11 @@ class PetWindow(QWidget):
         self.gl = GLRenderer(self.model, atlas, (1, 1))
         self.idle = IdleAnimator()
         self.mouse = MouseFollow()
+        self.defaults = {k: p.default for k, p in self.rig.params.items()}
+        self.vts_port = vts_port
+        self.vts: VTSClient | None = None
+        self.tracking = TrackingDriver(Mapping.load())
+        self._vts_status = None
         self.scale = SIZES[size]
         self._apply_size()
 
@@ -73,6 +91,8 @@ class PetWindow(QWidget):
         self.timer.timeout.connect(self.tick)
         self.timer.start(int(1000 / fps))
         self._make_tray()
+        if tracking:
+            self.track_action.setChecked(True)  # starts the client through set_tracking
 
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - self.width() - 40, screen.bottom() - self.height())
@@ -108,6 +128,10 @@ class PetWindow(QWidget):
         follow = self.mouse.update((cursor.x(), cursor.y()), self.head_screen_pos(), dt)
         values.update(follow)
         values["ParamAngleZ"] = values.get("ParamAngleZ", 0.0) + follow["ParamAngleX"] * 0.15
+        snap = self.vts.snapshot() if self.vts else None
+        tracked, weight = self.tracking.update(snap, dt)
+        values = blend(values, tracked, weight, self.defaults)
+        self._show_vts_status(snap)
         self.rig.set_values(values)
         self.rig.step_physics(dt)
         items = self.rig.evaluate()
@@ -178,6 +202,9 @@ class PetWindow(QWidget):
             act.triggered.connect(lambda _=False, s=s: self.set_scale(s))
             group.addAction(act)
             size_menu.addAction(act)
+        self.track_action = QAction("面捕（VTube Studio）", self, checkable=True, checked=False)
+        self.track_action.toggled.connect(self.set_tracking)
+        self.menu.addAction(self.track_action)
         top = QAction("置顶", self, checkable=True, checked=True)
         top.toggled.connect(self.set_on_top)
         self.menu.addAction(top)
@@ -205,6 +232,30 @@ class PetWindow(QWidget):
         img = np.ascontiguousarray(img)
         q = QImage(img.data, 64, 64, 256, QImage.Format_RGBA8888_Premultiplied).copy()
         return QIcon(QPixmap.fromImage(q))
+
+    def set_tracking(self, on: bool):
+        if on and self.vts is None:
+            self.vts = VTSClient(port=self.vts_port)
+            self.vts.start()
+        elif not on and self.vts is not None:
+            self.vts.stop()
+            self.vts = None
+            self.tray.setToolTip("chibi pet")
+            self._vts_status = None
+
+    def _show_vts_status(self, snap):
+        status = snap.status if snap else None
+        if status == self._vts_status:
+            return
+        self._vts_status = status
+        text = VTS_STATUS.get(status, "")
+        self.tray.setToolTip("chibi pet" + (f"\n{text}" if text else ""))
+        if snap:
+            print(f"[VTube Studio] {status} {self.vts.last_error if self.vts else ''}", flush=True)
+
+    def shutdown(self):
+        if self.vts is not None:
+            self.vts.stop()
 
     def set_scale(self, s: float):
         self.scale = s

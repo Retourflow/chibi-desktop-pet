@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-app = ["PySide6-Essentials>=6.6", "moderngl>=5.10"]      # the desktop pet window
+app = ["PySide6-Essentials>=6.6", "moderngl>=5.10", "websockets>=15"]  # pet window + VTube Studio
 psd = ["psd-tools>=1.9"]                                  # read layered PSD files
 tools = ["opencv-python-headless>=4.8", "scipy>=1.11"]    # tools/make_placeholder.py
 dev = ["pytest>=8"]
