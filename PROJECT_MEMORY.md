@@ -49,7 +49,7 @@
 ## 5. 待办 / 等待用户
 
 - [x] 用户在 GitHub 建好仓库并接到项目（2026-10-21）
-- [ ] 用户确认本地同步到哪个文件夹
+- [x] 本地同步文件夹：`D:\live2d pet`（2026-10-21）。同步方式：Claude 把仓库文件直接复制过去（不是 git clone），每个阶段结束后同步一次
 - [ ] 用户开始按 LAYER_SPEC 重画
 
 ## 6. 已知风险
@@ -59,7 +59,10 @@
 - VTS 是否必须加载模型才输出追踪值：待验证
 - 重画工作量大，美术交付时间决定整体进度；开发期间先用占位素材
 
-## 7. 相关文件
+## 7. 相关文件与位置
+
+- GitHub：https://github.com/Retourflow/chibi-desktop-pet （PR #1 = T1 骨架）
+- 用户本地副本：`D:\live2d pet`（Windows）。用户电脑上还有 `D:\Live2D Cubism 5.3`、`D:\live2d ai`、`D:\桌宠demo`、`D:\庄方宜桌宠` 等文件夹，内容未查看
 
 - `docs/LAYER_SPEC.md` — 给重画用的分层清单
 - `design.md` — 架构、参数表、决策记录
