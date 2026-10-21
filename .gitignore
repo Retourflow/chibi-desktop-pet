@@ -10,3 +10,5 @@ assets/build/
 build/
 .pip-cache/
 .tmp/
+# VTube Studio plugin token (per PC)
+.vts_token
