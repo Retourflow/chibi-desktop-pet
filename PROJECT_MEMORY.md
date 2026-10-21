@@ -12,10 +12,11 @@
 
 ## 2. 当前状态
 
-- **阶段**：T1 完成（PR #1）；T2/T3 完成（PR #2，叠在 PR #1 上）；下一步 T4 GPU 渲染 + 透明窗口
+- **阶段**：T1（PR #1）、T2/T3（PR #2）、T4（PR #3）完成，三个 PR 依次叠加；等用户在 Windows 上试运行，下一步 T6 VTube Studio + T7 点击互动/打瞌睡
 - **版本**：v0.1
-- **代码**：导入器（PSD/PNG → atlas + model.json）、rig 核心（keyform、Turn3D 假 3D 转头、Bend 链式弯曲、摆锤物理）、CPU 预览渲染器、占位图生成工具、预览动画工具。16 个 pytest 通过（只在 Linux 云端跑过）
-- **还不能运行桌宠**：没有窗口、没有实时渲染、没有面捕
+- **代码**：导入器（PSD/PNG → atlas + model.json）、rig 核心（keyform、Turn3D 假 3D 转头、Bend 链式弯曲、摆锤物理）、CPU 预览渲染器、占位图生成工具、预览动画工具、GPU 渲染器、桌宠窗口、待机和鼠标驱动。21 个 pytest 通过（只在 Linux 云端跑过）
+- **桌宠窗口已能运行（云端验证）**：透明置顶、待机呼吸/眨眼/摇摆、头和眼睛跟随鼠标、拖动、右键/托盘菜单（大小、置顶、退出）、GPU 渲染。还没有面捕、点击反应、打瞌睡
+- **Windows 上还没跑过**：透明效果、点击穿透、帧率都待用户验证
 - **美术**：用户将按 `docs/LAYER_SPEC.md` 重画分层 PSD，尚未交付。开发用占位图（从设定图粗拆，质量很粗糙）
 
 ## 3. 已确认需求（2026-10-21 访谈）
@@ -41,7 +42,7 @@
 | T1 仓库骨架 + 文档 | 仓库建好，docs 入库，pytest 能跑 | — |
 | T2 PSD 导入器 ✓ | 读 PSD/PNG → atlas + model.json | PSD 路径还没用真实 PSD 验证 |
 | T3 Rig 核心 ✓ | 参数 → keyform 插值 → 变形；单元测试覆盖插值和变形器层级 | |
-| T4 渲染 + 透明窗口 | Windows 上透明置顶显示，60fps | 若离屏读回方案帧率不够，再评估直接透明 GL |
+| T4 渲染 + 透明窗口 ✓（云端） | Windows 上透明置顶显示，60fps | 若离屏读回方案帧率不够，再评估直接透明 GL；Windows 待验证 |
 | T5 物理 | 头发/尾巴/流苏摆动自然，不发散 | 基础物理已在 T3 实现并测试，T5 只剩调参 |
 | T6 VTS 对接 | 连接、认证、参数映射、断线回落 | |
 | T7 桌宠行为 | 待机、鼠标跟随、点击反应、打瞌睡、托盘 | |
@@ -52,6 +53,7 @@
 - [x] 用户在 GitHub 建好仓库并接到项目（2026-10-21）
 - [x] 本地同步文件夹：`D:\live2d pet`（2026-10-21）。同步方式：Claude 把仓库文件直接复制过去（不是 git clone），每个阶段结束后同步一次
 - [ ] 用户开始按 LAYER_SPEC 重画
+- [ ] 用户在 Windows 上双击 `run_pet.bat` 试运行，反馈透明、点击穿透、帧率（控制台每 5 秒打印一次 fps）
 
 ## 6. 常用命令
 
@@ -66,11 +68,13 @@ python tools/preview.py build/placeholder_model build/preview.gif --crop 40,0,58
 python -m chibi_pet.importer art.psd build/model
 ```
 
+Windows：双击 `D:\live2d pet\run_pet.bat`（第一次会在本文件夹建 `.venv` 并安装依赖，之后直接启动）。占位模型在 `build\placeholder_model`（不进仓库，由 Claude 同步过去）。
+
 **用户规定：在用户电脑上只能占用 D 盘。** 以后在 Windows 上建 venv 时放在 `D:\live2d pet\.venv`，并把 pip 缓存设到 D 盘（`set PIP_CACHE_DIR=D:\live2d pet\.pip-cache`）。不要再在用户电脑上用 device_bash（会启动 Claude 桌面端的 Linux 虚拟机，占 C 盘约 20 GB 虚拟磁盘）。
 
 ## 7. 已知风险
 
-- 代码 rig 大角度转头会比手工 Cubism 扁平；占位图上转头时头发边缘有撕裂和接缝
+- 代码 rig 大角度转头会比手工 Cubism 扁平；占位图上转头时头发外轮廓还有少量撕裂和双线（脸部重影已在 2026-10-21 修掉，见 design.md §9）
 - 嘴的五个元音还没有 keyform；最终 PSD 的 `eyelash_upper/lower` 还没写 keyform（见 design.md §9）
 - 透明 OpenGL 窗口 / 点击穿透在 Windows 上的实现方式待原型验证
 - VTS 是否必须加载模型才输出追踪值：待验证
@@ -78,7 +82,7 @@ python -m chibi_pet.importer art.psd build/model
 
 ## 8. 相关文件与位置
 
-- GitHub：https://github.com/Retourflow/chibi-desktop-pet （**公开仓库**：不要提交用户的美术或其衍生物）。PR #1 = T1 骨架，PR #2 = T2/T3
+- GitHub：https://github.com/Retourflow/chibi-desktop-pet （**公开仓库**：不要提交用户的美术或其衍生物）。PR #1 = T1 骨架，PR #2 = T2/T3，PR #3 = T4
 - 预览动画和占位图放在项目共享文件夹 `/mnt/project-files/chibi-desktop-pet/previews/`，不进仓库
 - 用户本地副本：`D:\live2d pet`（Windows）。用户电脑上还有 `D:\Live2D Cubism 5.3`、`D:\live2d ai`、`D:\桌宠demo`、`D:\庄方宜桌宠` 等文件夹，内容未查看
 
@@ -91,3 +95,5 @@ python -m chibi_pet.importer art.psd build/model
 - 2026-10-21：项目创建；选定代码 rig 路线；完成 11 项需求访谈；写出 LAYER_SPEC / design / PROJECT_MEMORY 初稿；仓库建立，T1 骨架提交
 - 2026-10-21：用户发现 C 盘被占用（Claude 桌面端虚拟机），定下「只占用 D 盘」规则
 - 2026-10-21：T2/T3 完成：导入器、rig 核心、物理、CPU 渲染、占位图和 6 秒预览动画
+- 2026-10-21：T4 完成（云端验证）：GPU 渲染、透明桌宠窗口、待机动画、鼠标跟随、托盘、Windows 启动脚本、控制台 fps 显示；已同步到 D 盘（含占位模型）
+- 2026-10-21：用户反馈预览「有大量重叠部分」（转头时的重影 / 双线）。改进占位图工具：按颜色分开头发和皮肤，重新生成占位模型和新旧对比视频，同步到 D 盘

@@ -8,3 +8,5 @@ dist/
 # 生成的素材（由 importer 从 PSD 生成）
 assets/build/
 build/
+.pip-cache/
+.tmp/
