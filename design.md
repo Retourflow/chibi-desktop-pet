@@ -1,6 +1,6 @@
 # design.md — chibi-desktop-pet
 
-> 状态（2026-10-21）：导入器、rig 核心、物理、CPU 预览渲染已实现并有单元测试；GPU 渲染、窗口、VTube Studio、桌宠行为还没做。标「待验证」的地方还没有实际跑过。
+> 状态（2026-10-21）：导入器、rig 核心、物理、CPU 预览渲染、GPU 渲染、透明桌宠窗口（待机 + 鼠标跟随 + 拖动 + 托盘）已实现；VTube Studio、点击互动、打瞌睡还没做。标「待验证」的地方还没有实际跑过。
 
 ## 1. 路线
 
@@ -24,8 +24,8 @@
 | 网格计算 | numpy（顶点变形全部向量化） | ✓ |
 | 素材导入 | psd-tools 读 PSD，或读一个文件夹的整画布 PNG → atlas.png + model.json | ✓（PNG 路径已测试；PSD 路径代码已写，**还没用真实 PSD 测过**） |
 | 预览渲染 | 自写 numpy CPU 光栅化（`render/soft.py`），用于测试和预览 GIF | ✓，约 1 秒/帧，只适合离线预览 |
-| 实时渲染 | moderngl 离屏渲染到 FBO → 读回 → 透明 PySide6 窗口 | 计划（T4），待验证 |
-| 窗口 | PySide6，无边框 + 透明 + 置顶 | 计划（T4） |
+| 实时渲染 | moderngl（OpenGL 3.3）离屏渲染到 FBO → 读回 → 透明 PySide6 窗口 | ✓ 云端（llvmpipe 软件 GL + Xvfb）跑到 61 fps；**Windows 上待验证** |
+| 窗口 | PySide6，无边框 + 透明 + 置顶 + 托盘 | ✓ 同上，Windows 上的透明和点击穿透待验证 |
 | 面捕 | VTube Studio 插件 API，`ws://localhost:8001` | 计划（T6） |
 | 测试 | pytest | ✓ 16 个测试 |
 
@@ -47,6 +47,14 @@ src/chibi_pet/
     runtime.py  Rig：参数 → 物理 → keyform → 变形器链 → DrawItem 列表
   render/
     soft.py     CPU 光栅化（带 clip mask、premultiplied alpha）
+    gl.py       GPU 渲染（moderngl），规则与 soft.py 相同，测试里两者对比
+  drive/
+    idle.py     呼吸、随机眨眼（偶尔连眨两次）、尾巴和头发的「风」
+    mouse.py    头和眼睛跟随鼠标（tanh 饱和 + 指数平滑，眼睛快、身体慢）
+  app/
+    pet_window.py  透明置顶窗口、拖动、右键/托盘菜单（大小、置顶、退出）
+    __main__.py    python -m chibi_pet.app <model_dir>
+run_pet.bat     Windows 一键启动：在本文件夹里建 .venv，pip 缓存和临时文件也放在本文件夹
 assets/rig/chibi.rig.json   本角色的 rig spec（手写）
 tools/make_placeholder.py   从设定图粗拆占位图层（不提交生成结果）
 tools/preview.py            渲染预览动画 GIF
@@ -92,10 +100,15 @@ z 越大移动越多，所以五官比脸的轮廓移得多、前发比脸移得
 ### 5.4 物理（`physics.py`）
 每组是一个 Verlet 摆锤链：根部随输入参数左右移动（`kind: x`，如转头、身体摇摆），或整个参考系随头部旋转（`kind: angle`，让头发在歪头时仍然下垂）。输出每段相对前一段的角度（度）× scale，写进 bend 参数。阻尼按帧率归一化，内部 1/120 秒子步长，保证不同帧率下手感一致。
 
-### 5.5 渲染（`render/soft.py`，GPU 版将照搬同样的规则）
+### 5.5 渲染（`render/soft.py` 和 `render/gl.py` 规则相同）
 - atlas 先转成 premultiplied alpha，再做双线性采样，透明边缘不发黑
 - 每个部件先画进自己的缓冲区，再整体混合，避免共享边被画两次出现细缝
 - clip：例如瞳孔只在眼白范围内显示；遮罩的覆盖度会乘上遮罩自身的不透明度，所以闭眼时瞳孔一起消失
+- GPU 版：每个部件一个 VAO（位置缓冲每帧更新，UV 和索引不变）；clip 部件绘制前先把遮罩部件画进单通道 mask 纹理，片元着色器按 `gl_FragCoord` 采样；atlas 生成 mipmap，缩小显示时更平滑
+- 同一部件内相邻三角形共享的边，GPU 的光栅化规则保证每个像素只画一次，所以不需要 CPU 版那样的部件缓冲区
+
+### 5.6 窗口（`app/pet_window.py`）
+每帧：待机 + 鼠标跟随 → 参数 → 物理 → evaluate → GPU 离屏渲染 → 读回 → `QImage` → `paintEvent` 画进透明窗口。按 `devicePixelRatio` 渲染物理像素，高 DPI 屏幕不糊。拖动只在不透明像素上生效；Windows 上 Qt 的半透明顶层窗口是 layered window，完全透明的像素理论上会让点击穿透到下面的窗口（待验证）。
 
 ## 6. 参数表（v0.1）
 
@@ -137,6 +150,7 @@ VTS 输入参数名以实际 `InputParameterListRequest` 返回为准（待验�
 - 嘴的五个元音还没有 keyform；最终美术到了以后，参照 `ref_mouth_*` 图层做
 - 最终 PSD 用 `eyelash_upper_*` / `eyelash_lower_*` 两层，spec 目前只给占位图的合并层 `eyelash_*` 写了 keyform，需要补
 - CPU 预览约 1 秒/帧，只用于测试和出 GIF
+- 每帧 Python 端开销：evaluate 约 2.7 ms，物理约 0.8 ms（云端测得）
 
 ## 10. 设计决策记录
 
@@ -157,4 +171,5 @@ VTS 输入参数名以实际 `InputParameterListRequest` 返回为准（待验�
 | 2026-10-21 | rig spec 用相对部件的坐标 | 占位图和最终美术可共用同一份 spec |
 | 2026-10-21 | 先写 CPU 渲染器 | 云端环境没有 GPU / 显示器，需要能无窗口地测试和出预览 |
 | 2026-10-21 | 占位图和预览不提交到仓库 | 仓库是公开的，那些是用户角色美术的衍生物 |
-| 2026-10-21 | 渲染用 moderngl 离屏 + QWidget（计划） | 避开 Windows 透明 GL 窗口问题；待原型验证 |
+| 2026-10-21 | 渲染用 moderngl 离屏 + 透明 QWidget 画图 | 避开 Windows 透明 OpenGL 窗口的兼容问题；云端已验证，Windows 待验证 |
+| 2026-10-21 | Windows 启动脚本把 venv、pip 缓存、临时文件都放在项目文件夹 | 用户规定只能占用 D 盘 |
