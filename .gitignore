@@ -7,3 +7,4 @@ dist/
 .pytest_cache/
 # 生成的素材（由 importer 从 PSD 生成）
 assets/build/
+build/
