@@ -12,3 +12,5 @@ build/
 .tmp/
 # VTube Studio plugin token (per PC)
 .vts_token
+# remembered pet settings (per PC)
+.pet_settings.json
