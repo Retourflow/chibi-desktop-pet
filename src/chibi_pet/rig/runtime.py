@@ -45,6 +45,9 @@ class RigPart:
     keyforms: list[KeyformGroup] = field(default_factory=list)
     opacity: float = 1.0
     clip: str | None = None
+    # optional second deformer chain and per-vertex weights (0 = chain, 1 = chain2)
+    chain2: list[Deformer] | None = None
+    weight2: np.ndarray | None = None
 
 
 @dataclass
@@ -57,21 +60,64 @@ class DrawItem:
     clip: str | None
 
 
-def _depth(spec: dict | None, rest: np.ndarray, res: Resolver, name: str) -> np.ndarray:
+def _depth(
+    spec: dict | str | None,
+    rest: np.ndarray,
+    res: Resolver,
+    name: str,
+    part_specs: dict | None = None,
+    _seen: tuple[str, ...] = (),
+) -> np.ndarray:
+    """Per-vertex depth z used by Turn3D deformers (pixels, larger = closer to the viewer).
+
+    Recipes:
+      {"type": "const", "z": length}
+      {"type": "sphere", "center": point, "radius": length, "z_scale": 1.0}
+      {"type": "bump", "center": point, "sigma": length, "amplitude": length}
+          z = amplitude * exp(-d^2 / sigma^2): a smooth hill that is highest at the
+          centre and fades to ~0 at the head's outline
+      {"like": "face", "scale": 1.0}  or just "face"
+          the same field as another part (evaluated at this part's vertices), times scale
+    Every recipe also takes "offset" (a length added at the end) and "y_scale".
+    Parts that touch each other should sit on the same field: then a head turn moves
+    them together and no seam or doubled outline opens between them.
+    """
     if not spec:
         return np.zeros(len(rest))
-    kind = spec.get("type", "const")
+    if isinstance(spec, str):
+        spec = {"like": spec}
     offset = res.length(spec["offset"], name) if "offset" in spec else 0.0
+    if "like" in spec:
+        ref = spec["like"]
+        if ref in _seen:
+            raise ValueError(f"{name}: depth 'like' cycle through '{ref}'")
+        base = (part_specs or {}).get(ref, {}).get("depth")
+        z = _depth(base, rest, res, name, part_specs, _seen + (ref,))
+        return z * spec.get("scale", 1.0) + offset
+    kind = spec.get("type", "const")
     if kind == "const":
         return np.full(len(rest), res.length(spec.get("z", 0.0), name) + offset)
+    c = res.point(spec["center"], name)
+    dx = rest[:, 0] - c[0]
+    dy = (rest[:, 1] - c[1]) * spec.get("y_scale", 1.0)
     if kind == "sphere":
-        c = res.point(spec["center"], name)
         r = res.length(spec["radius"], name)
-        dx = rest[:, 0] - c[0]
-        dy = (rest[:, 1] - c[1]) * spec.get("y_scale", 1.0)
         z = np.sqrt(np.maximum(r * r - dx * dx - dy * dy, 0.0))
         return z * spec.get("z_scale", 1.0) + offset
+    if kind == "bump":
+        sigma = res.length(spec["sigma"], name)
+        amp = res.length(spec["amplitude"], name)
+        return amp * np.exp(-(dx * dx + dy * dy) / (sigma * sigma)) + offset
     raise ValueError(f"{name}: unknown depth type '{kind}'")
+
+
+def _blend_weights(spec: dict, rest: np.ndarray, res: Resolver, name: str) -> np.ndarray:
+    """0 before `from`, 1 after `to`, smoothstep in between (measured along from -> to)."""
+    a = res.point(spec["from"], name)
+    b = res.point(spec["to"], name)
+    ab = b - a
+    u = np.clip((rest - a) @ ab / float(ab @ ab), 0.0, 1.0)
+    return u * u * (3.0 - 2.0 * u)
 
 
 def _form_offsets(form: dict, rest: np.ndarray, res: Resolver, name: str) -> tuple[np.ndarray, float]:
@@ -134,6 +180,8 @@ def _build_deformer(d: dict, res: Resolver) -> Deformer:
             root=res.point(d["root"]),
             tip=res.point(d["tip"]),
             segments=[dict(s) for s in d["segments"]],
+            mode=d.get("mode", "bend"),
+            falloff=tuple(res.length(v) for v in d["falloff"]) if "falloff" in d else None,
         )
     raise ValueError(f"deformer {d['id']}: unknown type '{kind}'")
 
@@ -181,13 +229,10 @@ class Rig:
             if ps.get("hidden") or (not mesh.visible and name not in part_specs):
                 continue
             rest = mesh.vertices
-            depth = ps.get("depth")
-            if isinstance(depth, str):  # reuse another part's depth recipe, e.g. "face"
-                depth = part_specs.get(depth, {}).get("depth")
             part = RigPart(
                 name=name,
                 rest=rest,
-                z=_depth(depth, rest, res, name),
+                z=_depth(ps.get("depth"), rest, res, name, part_specs),
                 uvs=mesh.uvs,
                 triangles=mesh.triangles,
                 chain=self._chain(ps.get("deformer", default_def)),
@@ -195,6 +240,12 @@ class Rig:
                 opacity=float(ps.get("opacity", 1.0)),
                 clip=ps.get("clip") if ps.get("clip") in model.parts else None,
             )
+            # "blend": the part follows `deformer` near `from` and a second deformer
+            # near `to`, e.g. back hair: the crown turns with the head, the long ends
+            # hang from the body. Put the change-over where other parts cover it.
+            if "blend" in ps:
+                part.chain2 = self._chain(ps["blend"]["deformer"])
+                part.weight2 = _blend_weights(ps["blend"], rest, res, name)
             self.parts.append(part)
 
         self.physics: list[PendulumChain] = []
@@ -251,7 +302,13 @@ class Rig:
                 off, op = kf.evaluate(self.values)
                 pts += off
                 opacity *= op
+            out = pts
             for d in part.chain:
-                pts = d.apply(pts, part.z, self.values)
-            items.append(DrawItem(part.name, pts, part.uvs, part.triangles, opacity, part.clip))
+                out = d.apply(out, part.z, self.values)
+            if part.chain2 is not None:
+                out2 = pts
+                for d in part.chain2:
+                    out2 = d.apply(out2, part.z, self.values)
+                out = out + (out2 - out) * part.weight2[:, None]
+            items.append(DrawItem(part.name, out, part.uvs, part.triangles, opacity, part.clip))
         return items
