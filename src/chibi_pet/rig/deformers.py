@@ -96,12 +96,29 @@ class BendDeformer(Deformer):
     starts at 0 at the root, so the root stays attached while the tip swings.
     Vertices are expressed as (s along the chain, t sideways) and carried
     along the bent curve.
+
+    mode "bend" (default): each cross-section turns with the curve, like a thin
+    lock or a tail. mode "shear": each cross-section only shifts by the centre
+    line's displacement and stays level. Use it for wide shapes (a curtain of back
+    hair, the bangs): turning a wide cross-section would lift one edge and drop
+    the other by (half width) x sin(angle), which tears it away from its neighbours.
     """
 
     root: np.ndarray = field(default_factory=lambda: np.zeros(2))
     tip: np.ndarray = field(default_factory=lambda: np.array([0.0, 1.0]))
     segments: list[dict[str, float]] = field(default_factory=list)  # angle coeffs per segment
     samples: int = 64
+    mode: str = "bend"  # "bend" or "shear"
+    # optional sideways fade (pixels): full effect within `falloff[0]` of the chain's
+    # axis, none beyond `falloff[1]`. Lets the middle of the bangs sway while their
+    # sides stay glued to the head outline.
+    falloff: tuple[float, float] | None = None
+
+    def __post_init__(self):
+        if self.mode not in ("bend", "shear"):
+            raise ValueError(f"bend deformer {self.id}: unknown mode '{self.mode}'")
+        if self.falloff is not None and not 0 <= self.falloff[0] < self.falloff[1]:
+            raise ValueError(f"bend deformer {self.id}: falloff needs 0 <= inner < outer")
 
     def apply(self, pts, z, values):
         n = len(self.segments)
@@ -136,14 +153,26 @@ class BendDeformer(Deformer):
         phi_v = np.interp(s_clamped, ss, phi)
         # beyond the tip: continue straight along the last direction
         extra = np.maximum(s - length, 0.0)
-        # before the root (s < 0): unchanged, i.e. no rotation
-        before = np.minimum(s, 0.0)
-        tangent = rotate(np.broadcast_to(d, (len(s), 2)), phi_v)
-        side = rotate(np.broadcast_to(nrm, (len(s), 2)), phi_v)
-        out = (
-            self.root
-            + np.stack([px, py], 1)
-            + tangent * (extra + before)[:, None]
-            + side * t[:, None]
-        )
+        if self.mode == "shear":
+            # shift by how far the centre line moved at this s; no turning.
+            # s < 0 (above the root) gives s_clamped = 0, i.e. no shift.
+            straight = s_clamped[:, None] * d
+            moved = np.stack([px, py], 1) + (dirs[-1] - d) * extra[:, None]
+            out = pts + moved - straight
+        else:
+            # before the root (s < 0): unchanged, i.e. no rotation
+            before = np.minimum(s, 0.0)
+            tangent = rotate(np.broadcast_to(d, (len(s), 2)), phi_v)
+            side = rotate(np.broadcast_to(nrm, (len(s), 2)), phi_v)
+            out = (
+                self.root
+                + np.stack([px, py], 1)
+                + tangent * (extra + before)[:, None]
+                + side * t[:, None]
+            )
+        if self.falloff is not None:
+            inner, outer = self.falloff
+            u = np.clip((outer - np.abs(t)) / (outer - inner), 0.0, 1.0)
+            w = u * u * (3.0 - 2.0 * u)  # smoothstep
+            out = pts + (out - pts) * w[:, None]
         return out

@@ -47,6 +47,8 @@ pytest
 python -m chibi_pet.importer art.psd build/model
 # 渲染一段预览动画
 python tools/preview.py build/model build/preview.gif
+# 逐帧检查动起来以后有没有重叠、双线、露边、透光缝（需要 OpenGL）
+python tools/check_overlap.py build/model --out build/check
 # 启动桌宠
 python -m chibi_pet.app build/model
 ```
