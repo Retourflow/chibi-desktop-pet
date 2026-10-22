@@ -57,7 +57,7 @@
 - [x] 本地同步文件夹：`D:\live2d pet`（2026-10-21）。同步方式：Claude 把仓库文件直接复制过去（不是 git clone），每个阶段结束后同步一次
 - [ ] 用户开始按 LAYER_SPEC 重画
 - [ ] 用户在 Windows 上双击 `run_pet.bat` 试运行，反馈透明、点击穿透、帧率（控制台每 5 秒打印一次 fps）
-- [ ] 用户看重叠清理后的对比视频（`D:\live2d pet\build\previews\before_after_v3.mp4`），确认能不能接受；剩下的极限动作问题要不要继续修（design.md §9）
+- [ ] 用户看重叠清理后的对比视频（`D:\live2d pet\build\previews\v0.1-overlap-cleanup-before-after.mp4`），确认能不能接受；剩下的极限动作问题要不要继续修（design.md §9）
 - [ ] 用户打开 VTube Studio 试面捕；方向不对或连不上时运行 `check_vts.bat` 把输出发回来
 
 ## 6. 常用命令
